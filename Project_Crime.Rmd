@@ -1,0 +1,360 @@
+---
+title: "Project"
+author: Austin Powell, Namrata Kolla
+date: June 4, 2019
+output: html_document
+---
+```{r, warning=FALSE}
+# import packages
+library(readr)
+library(igraph)
+library(dplyr)
+library(latentnet)
+library(VBLPCM)
+library(rgl)
+```
+
+```{r, include=TRUE}
+# load main edge list of person to crime
+out_moreno_crime_crime <- read_table2("out.moreno_crime_crime.tsv", 
+                                      col_names = FALSE, comment = "%")
+unique(out_moreno_crime_crime$X3)
+  # delete unnecessary NA column
+out_moreno <- subset(out_moreno_crime_crime, select = -c(X3) )
+names(out_moreno) <- c("person_id", "crime_id")
+#plot(moreno_network)
+
+# load sex attributes
+crime_person_sex <- read_table2("ent.moreno_crime_crime.person.sex.tsv", col_names = FALSE)
+
+# Note these are the same: 
+print(length(unique(out_moreno$X1)))
+print(dim(crime_person_sex))
+
+# create an id column to join by & join
+len = dim(crime_person_sex)[1]
+crime_person_sex$person_id <- seq(1,len)
+print(tail(crime_person_sex))
+df <- merge(x=out_moreno,y=crime_person_sex,by="person_id",all.x=TRUE)
+
+# load name attributes
+crime_person_name <- read_table2("ent.moreno_crime_crime.person.name.tsv", col_names = FALSE)
+
+# Note these are the same: 
+print(length(unique(df$person_id)))
+print(dim(crime_person_name))
+
+# create an id column to join by & join
+crime_person_name$person_id <- seq(1,len)
+print(tail(crime_person_sex))
+df <- merge(x=df,y=crime_person_name,by="person_id",all.x=TRUE)
+
+# get edge list (person roles)
+crime_person_role <- read_delim("rel.moreno_crime_crime.person.role.tsv", "\t", escape_double = FALSE, col_names = FALSE, trim_ws = TRUE)
+```
+
+```{r, include=TRUE}
+# bind involvements
+df <- bind_cols(df,crime_person_role)
+names(df) <- c("person_id", "crime_id","person_sex","person_name", "person_role")
+  # person_sex: 1 = male; 2 = female; no other options
+
+#View(df)
+
+# Should be using person's name rather than their id; switch person_id with person_name
+df2 <- df[,c("person_name","crime_id","person_sex","person_role")]
+#View(df2)
+
+# rpubs.com/pjmurphy/317505
+g2 <- graph.data.frame(df2,directed=FALSE)
+V(g2)$type <- bipartite_mapping(g2)$type
+plot(g2,layout=layout.bipartite)
+  # Makes sense, many more people (top) involved than crimes (bottom)
+
+```
+
+```{r, include=TRUE,fig.width=25, fig.height=25}
+# https://rpubs.com/pjmurphy/317838
+# Calculating centrality 
+types2 <- V(g2)$type
+deg2 <- degree(g2)
+bet2 <- betweenness(g2)
+clos2 <- closeness(g2)
+eig2 <- eigen_centrality(g2)$vector
+cent_df2 <- data.frame(types2,deg2,bet2,clos2,eig2)
+cent_df <- cent_df2
+cent_df <- cbind(name = rownames(cent_df), cent_df) # Add a new column with the index (which currently contains crime names and person names)
+cent_df %>% 
+  filter(types2==FALSE) %>%
+  arrange(desc(deg2))
+
+#cent_df2[order(cent_df2$types2,cent_df2$deg2,decreasing=TRUE),] 
+#cent_df2[order(cent_df2$deg2,decreasing=TRUE),] 
+  # Jenny Willis has 25 involvements! 
+```
+
+What are "central" or "important" crimes? Who are "central" or "important" people? 
+
+## 5 Most Central Crimes
+* By degree: 110, 153, 14, 43, 95
+* By closeness: 47, 160, 23, 14, 432 
+* By betweenness: 110, 23, 160, 47, 46
+* By eigencentrality: 110, 95, 417, 419, 43
+
+## 5 Most Central People
+* By degree: WillisJenny, AbramsChad, KatzLuella, DicksonCarter, BendixJerryLee
+* By closeness: SlatteryMaurice, WillisJenny, AbramsChad, SteinerCatherine, HemphillBud
+* By betweenness: WillisJenny, SlatteryMaurice, AbramsChad, SteinerCatherine, KingMalcolm
+* By eigencentrality: KatzLuella, SteinerCatherine, SmithMichaelThomas, JohnstonJustin, MitchellGrant
+
+Degree describes people who are involved with the most number of crime involvements (a person cannot be directly connected to another person, only through a crime), which may  be the most suspicious person (knows a lot of other suspects), the most observant person (witnesses a lot of crimes), or a targeted member community (knows a lot of victims). Degree describes crimes that involve the most number of people (a crime cannot be directly connected to another crime, only through a person), which may be the crime with the heaviest casualities (a lot of victims), most public crime (a lot of witnesses), or the most difficult crime to solve (a lot of suspects).
+
+Closeness describes nodes closest to all of the other nodes (shortest average path between that node and all of the other nodes). This describes people who are most closesly connected to other people via crime involvements and crimes that are most closely connected to other crimes. In other words, these are probably people and crimes that share a lot of common people and crimes. The top crimes/people should be near the "core" in a picture of the network. 
+
+Betweenness describes the number of times a node acts as a bridge along the shortest path between two other nodes. It describes people who are the primary connections to other people and crimes who are the primary connections to other crimes. These are "connectors" in the crime community; people whom investigators may go to for more witnesses or suspects.
+
+Eigenvector centrality is a measure of the influence of a node in a network. It assigns relative scores to all nodes in the network based on the concept that connections to high-scoring nodes contribute more to the score of the node in question than equal connections to low-scoring nodes. It's unclear what this would mean for our network.
+
+Degree is the most intuitive and interesting measure of centrality for our problem. It would be interesting to classify the high-degree people by their reason for degree centrality (i.e. suspicious, observant, or targeted victim) and the high-degree crimes by their reason for degree centrality (i.e. heaviest casualties, most public crime, or most difficult to solve). 
+
+Page 13 of [this resource](https://crimegunintelcenters.org/wp-content/uploads/2018/07/iacawp_2018_02_social_network_analysis.pdf) is helpful.
+
+```{r, include=TRUE,fig.width=25, fig.height=25}
+#change vertex color (append a vertex of all 2's so the crimes can be colored)
+max_crime<-max(df2$crime_id)
+color<-c(crime_person_sex$X1,rep(2, max_crime))
+V(g2)$person_sex<-color
+
+#Added Vertex Colors
+V(g2)$color<-color
+V(g2)$color=gsub(0,"Gold", V(g2)$color)
+V(g2)$color=gsub(1,"Forest Green", V(g2)$color)
+V(g2)$color=gsub(2,"grey", V(g2)$color)
+
+#Set line type according to role (linetypes go from 1-5 as integers)
+linetype<-c(crime_person_role$X1)
+linetype=gsub("Victim Suspect", 1, linetype)
+linetype=gsub("Suspect", 1, linetype)
+linetype=gsub("Victim", 1, linetype)
+linetype=gsub("Witness", 2, linetype)
+linetype<-as.integer(linetype)
+E(g2)$lty<-linetype
+
+#Set weight according to role (consider 3 bold)
+weight<-c(crime_person_role$X1)
+weight=gsub("Victim Suspect", 3, weight)
+weight=gsub("Suspect", 1, weight)
+weight=gsub("Victim", 1, weight)
+weight=gsub("Witness", 1, weight)
+weight<-as.integer(weight)
+E(g2)$weight<-weight
+
+#Set color according to role
+e_color<-c(crime_person_role$X1)
+e_color=gsub("Victim Suspect", "black", e_color)
+e_color=gsub("Suspect", "red", e_color)
+e_color=gsub("Victim", "black", e_color)
+e_color=gsub("Witness", "black", e_color)
+E(g2)$color<-e_color
+
+#Set Vertex shape according to type
+V(g2)$shape<-ifelse(V(g2)$type, "square", "circle")
+
+#Set size of vertex and vertex label
+V(g2)$size <- degree(g2)*.35
+V(g2)$label.cex <- degree(g2)*0.07
+
+#Regular Graph
+plot(g2, layout=layout_with_graphopt, edge.color=E(g2)$color, edge.width=E(g2)$weight, edge.lty=E(g2)$lty)
+
+#Bipartite Shape (looks terrible right now)
+#plot(g2, layout=layout.bipartite, edge.color=E(g2)$color, edge.width=E(g2)$weight, edge.lty=E(g2)$lty)
+```
+
+#Graph Attributes (any of these can be changed)
+Vertices:
+
+* Green=male
+* Gold=female
+
+Edges:
+
+* Normal=Victim
+* Red=Suspect
+* Dashed=Witness
+* Bold=Victim Suspect
+
+```{r, include=TRUE, fig.width=25, fig.height=25, warning=FALSE}
+##Attempt to make a subgraph
+
+# Works for single vertices only 
+# https://stackoverflow.com/questions/36134840/igraph-neighbors-as-subgraph-make-ego-graph-as-single-graph
+subv <- c('WillisJenny')
+#subv <- c('WillisJenny','AbramsChad','KatzLuella','DicksonCarter','BendixJerryLee')
+#subv <- c(110, 153, 14, 43, 95) # Not sure why this is only plotting one person with each crime
+list_of_edges <- E(g2)[from(subv) | to(subv)]
+your_subgraph <- subgraph.edges(g2, list_of_edges)
+plot(your_subgraph) 
+
+# If you choose multiple, this method may be working?  
+#subv <- c('WillisJenny')
+subv <- c('WillisJenny','AbramsChad','KatzLuella','DicksonCarter','BendixJerryLee')
+sub_g <- decompose.graph(g2,mode="weak")
+neighverts <- unique(unlist(sapply(sub_g,FUN=function(s){if(any(V(s)$name %in% subv)) V(s)$name else NULL})))
+g3 <- induced.subgraph(graph=g2,vids=neighverts)
+plot(g3)
+
+
+# Austin's working method:
+
+#Original Graph Pre-processing
+#Bump up Vertex Size
+V(g2)$size <- degree(g2)*2
+
+#Successful Attempt
+#Get neighbors
+n_jenny<-neighbors(g2,815)
+# Question: how did you figure out 815? 
+
+#Add Jenny
+n_jenny<-union(n_jenny, 815)
+#Generate Subgraph
+sub_jenny<-subgraph(g2,n_jenny)
+#Set size of vertex and vertex label
+#V(sub_jenny)$size <- 10
+V(sub_jenny)$label.cex <- 3
+# Show all crimes Jenny was involved in and involvement type
+plot(sub_jenny)
+
+#Jenny was involved in many small crimes and was a suspect in all but two!
+```
+
+
+```{r, include=TRUE}
+#Export Graph
+#png(filename="Just_Crime_Graph.png",1920*7,1080*7)
+#plot(g2, layout=layout_with_graphopt, edge.color=E(g2)$color, edge.width=E(g2)$weight, edge.lty=E(g2)$lty)
+#dev.off()
+```
+
+#Network Analysis Options
+
+*Latent geometry of bipartite networks*
+* Figure like 1a would show "fast decay" and that the max number of common neighbors is very small. 
+* Figure like 1b would show that people with more than 10 involvements are not necessarily much larger than 10 involvements (rather just barely above 10)
+* Question: Dissect this better - "The heterogeneity in the observed number of common neighbors implies the existence of a large number of 4- loops in real bipartite networks. Indeed, a pair of nodes a,b sharing a large number of common neighbors will have a large number of 4-loops passing through them, that is,loops of the form a→c→b→d→a.
+* Latent geometry review: we assume that nodes in bipartite networks are points in some geometric space underlying the system. The more similar two nodes are, the smaller the latent distance between them and the higher the probability that the nodes are connected. Crimes and people can be similar because the person is wealthy, or the geographic location, etc.
+* The number of common neighbors is a crucial measure; allows one to estimate the similarity distance between two nodes in a bipartite network.
+* For bipartite clustering, we quantify the density of 4-loops adjacent to a node i
+* This result supports the possibility of inferring latent geometries underlying real bipartite systems by inferring the geometries of their one-mode projections using existing techniques, as in [48]. However, since geometry is not preserved exactly but only approximately, using one-mode projections can render geometry inference inaccurate, especially in smaller networks with weaker bipartite clustering. Such inaccuracies are particularly high in sf/sf networks with power law exponents γ close to 2.
+
+*Inferring structure in bipartite networks using the latent blockmodel and exact ICL*
+* Approaches to clustering or blockmodelling of two-mode networks fall into two classes: 1) deterministic whereby the clustering of the network (or adjacency matrix) is obtained by minimizing an objective function which measures discrepancy from an ideal block structure. 2) The second type of approach is stochastic, where one assumes that the probability of links between the node sets in the network can be modelled by a parameterized distribution. These parameters are usually estimated (learned) and then used as a representative embodiment of the true network linking behaviour. The stochas- tic approach may also be referred to as model-based; that is, a statistical model is used for links in the network.
+* This paper is concerned with the stochastic approach to blockmodelling of two-mode networks, #2. In particular, we take the latent blockmodel (LBM) because it provides a model-based clustering of both node sets and has richer modelling capability than only absence/presence data for ties between nodes should this information be observed. The LBM operates on items and objects as opposed to the SBM which focusses on modelling interactions between items.
+* Measure sparcity (e.g. many people are not invovled in multiple crimes so the network is quite sparse (e.g. 93%))
+* Can cluster groups of individuals giving a similar rating to specific groups of movies. For crimes it would be individuals involved in similar types of crimes. Or crimes where similar people were involved (e.g. women)
+
+*Mixed-Membership Latent Space Modeling of Email Networks*
+* We first describe a model which only considers network attributes, the mixed member- ship latent space model (MMLSM). Since this model has close structural parallels to latent Dirichlet allo- cation (LDA), which can be used to model text at- tributes, the second model we consider is an extension called MMLSM+LDA that uses the document-specific mixing proportions from LDA as the mixing propor- tions for MMLSM. Finally, we introduce a proper joint model of both text and network attributes called the relational latent topic-space model (RLTSM).
+
+# Other ideas 
+
+* [See if people](https://hackernoon.com/fight-crime-with-social-network-analysis-7a879d4a65ea) behave like their closest friends (e.g. Jenny's connections are most likely to be suspects too, Jerry Lee Bendix's connections are most likely to be victims too). Jacob Moreno modeled disappeared individuals' relations, intelligence, and social activities which revealed that the main driving force was these individuals behaved as their closest, most influential people around them did. 
+* Is it possible in this dataset for people to commit crimes together? If so, can we figure out who is committing crimes together? 
+* Look for cliques (suspects/victims/witnesses that hang together?)
+* Can we predict the [contagion](https://ric-zai-inc.com/Publications/cops-w0859-pub.pdf) of committing a crime (becoming a future suspect) or who's most likely to be the next victim? 
+
+```{r, fig.width=25, fig.height=25}
+# Create co-offending network 
+
+#V(g2)$type <- bipartite.mapping(g2)$type
+par(mfrow=c(1,2),mar=c(0,1,1,1))
+#plot(g2, main="Full Network",edge.arrow.size=0.5)
+g_people<-bipartite.projection(g2)$proj1
+g_crime<-bipartite.projection(g2)$proj2
+plot(g_people,main="People Network")
+plot(g_crime,main="Crime Network")
+```
+
+
+```{r, fig.width=25, fig.height=25}
+#Decompose Graph into connected groups
+gc_groups<-decompose(g_crime)
+
+#Check groups
+plot(gc_groups[[1]])
+
+#Get edgelist
+gc_el <- get.edgelist(gc_groups[[1]])
+
+#Create Network from edgelist
+crime_net<-network(gc_el, directed=FALSE)
+
+#plot to confirm
+plot.network(crime_net)
+
+# Run Latent Net # doesn't work, used VBLPCM below 
+# crime_fit <- ergmm(crime_net ~ euclidean(d=2), control=control.ergmm(mle.maxit=1))
+
+# #Run VBLPCM
+crime_form<-vblpcmstart(crime_net,G=4,d=3,model="plain")
+crime_fit<-vblpcmfit(crime_form, STEPS = 10)
+#plot.vblpcm(crime_fit)
+
+#Get summary
+summary(crime_fit)
+```
+
+```{r, include=TRUE}
+# Create 3D plot
+crime_x<-fruchterman_reingold(crime_fit$net, D=3, steps=1000)
+plot3d(crime_x)
+```
+
+```{r, include=TRUE}
+#Export VBLPCM
+png(filename="Just_Crimes_Largest_Group_Graph.png",1920*7,1080*7)
+par(bg=NA)
+plot(gc_groups[[1]])
+dev.off()
+```
+
+```{r, fig.width=25, fig.height=25}
+##Remove all edges except suspect edges
+#Data Frame 4 (Not Useful)
+df4 <- df[,c("person_name","crime_id","person_sex","person_role","person_id")]
+
+#Subset Data Frame to Give Only Suspects
+el_suspects<-subset(df4, person_role=="Suspect")
+
+#Get remaining person ids
+suspect_id<-intersect(el_suspects$person_id,crime_person_sex$person_id)
+SEX<-crime_person_sex$X1[suspect_id]
+
+#Create New Suspects Graph
+g_suspects <- graph.data.frame(el_suspects,directed=FALSE)
+
+#Set Bipartite Type
+V(g_suspects)$type <- bipartite_mapping(g_suspects)$type
+
+#Set Sex
+V(g_suspects)$sex<-SEX
+
+#Make it easier to look at
+#Set Vertex shape according to type
+V(g_suspects)$shape<-ifelse(V(g_suspects)$type, "square", "circle")
+
+#Set size of vertex and vertex label
+V(g_suspects)$size <- degree(g_suspects)*.41
+V(g_suspects)$label.cex <- degree(g_suspects)*0.33
+
+#Plot
+plot(g_suspects)
+```
+
+```{r, include=TRUE}
+#Export Graph
+png(filename="Crime_Graph_Suspects_Only.png",1920*7,1080*7)
+plot(g_suspects)
+dev.off()
+```
